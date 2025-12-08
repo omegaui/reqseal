@@ -233,6 +233,28 @@ There’s also a tiny `createInMemoryReplayCache(ttlMs)` helper implementing the
 
 ---
 
+## Benchmark
+Here's a quick benchmark from my machine:
+```
+bun run test/benchmark.js
+```sh
+➜  reqseal git:(master) ✗ bun run test/benchmark.js 
+Total: 1140.60 ms for 100000 iters
+Per op: 0.011406 ms (~87673 ops/sec)
+```
+
+My Specs:
+```
+-----------------
+OS: Ubuntu 25.10 x86_64
+Kernel: Linux 6.17.0-7-generic
+Shell: zsh 5.9
+CPU: 11th Gen Intel(R) Core(TM) i5-1135G7 (8) @ 4.20 GHz
+GPU: Intel Iris Xe Graphics @ 1.30 GHz [Integrated]
+Memory: 6.95 GiB / 18.73 GiB (37%)
+Swap: 23.17 MiB / 8.00 GiB (0%)
+```
+
 ## Summary
 
 ReqSeal is a **time-based, matrix-encoded request sealing scheme** that turns each request into a short-lived, hard-to-forge, hard-to-replay key:
