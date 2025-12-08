@@ -24,8 +24,6 @@ curl -X GET http://localhost:3000/secure \
   -H "x-reqseal-key: <your-generated-key>"
 ```
 
-> <your-generated-key>
-
 You can obtain a key by running the test number 1, from the root repository.
 ```
 bun run test/test-1.js
