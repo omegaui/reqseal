@@ -50,10 +50,10 @@ export default class ReqSeal {
         };
 
         // ✅ Precompute decode maps (for O(1) decode)
-        this.buildDecodeMaps();
+        this.#buildDecodeMaps();
     }
 
-    buildDecodeMaps() {
+    #buildDecodeMaps() {
         const entries = Object.entries(this.matrix);
         if (entries.length === 0) {
             this.colDecodeMaps = [];
@@ -82,13 +82,13 @@ export default class ReqSeal {
         }
     }
 
-    log(msgFn) {
+    #log(msgFn) {
         if (this.options.debug) console.log('[ReqSeal]', msgFn());
     }
 
     generateKey() {
         const time = Date.now().toString().split('');
-        this.log(() => `Using time: ${time.join('')} as rice`);
+        this.#log(() => `Using time: ${time.join('')} as rice`);
 
         // ✅ Fisher–Yates shuffle (O(n))
         const shuffled = [...time];
@@ -119,9 +119,9 @@ export default class ReqSeal {
 
             // a subset of key will contain three parts
             // [encodedDigit][encodingIndexEncoded][originalIndexEncoded]
-            const encodedDigit = this.encodeDigit(digit, encodingIndex);
-            const encodedEncodingIndex = this.encodeDigit(encodingIndex, colIdxForEncoding);
-            const encodedOriginalIndex = this.encodeDigit(originalIndex, colIdxForEncoding);
+            const encodedDigit = this.#encodeDigit(digit, encodingIndex);
+            const encodedEncodingIndex = this.#encodeDigit(encodingIndex, colIdxForEncoding);
+            const encodedOriginalIndex = this.#encodeDigit(originalIndex, colIdxForEncoding);
 
             keyParts.push(
                 encodedDigit,
@@ -156,10 +156,10 @@ export default class ReqSeal {
             const baseSize = this.matrix[0][0].length;
 
             // let's first find the sauce
-            const sauceParts = this.parts(sauce, baseSize);
+            const sauceParts = this.#parts(sauce, baseSize);
             let colForEncodingIdx = "";
             for (const part of sauceParts) {
-                const decoded = this.decode(part);
+                const decoded = this.#decode(part);
                 colForEncodingIdx += decoded;
             }
             colForEncodingIdx = parseInt(colForEncodingIdx);
@@ -174,7 +174,7 @@ export default class ReqSeal {
 
                 let encodedEncodingIndexSizeStartX = encodedDigitEndX;
                 const encodedEncodingIndexSize =
-                    this.startingNumber(key.substring(encodedEncodingIndexSizeStartX));
+                    this.#startingNumber(key.substring(encodedEncodingIndexSizeStartX));
                 encodedEncodingIndexSizeStartX =
                     encodedEncodingIndexSizeStartX + encodedEncodingIndexSize.toString().length;
                 const encodedEncodingIndexSizeEndX =
@@ -184,7 +184,7 @@ export default class ReqSeal {
 
                 let encodedOriginalIndexStartX = encodedEncodingIndexSizeEndX;
                 const encodedOriginalIndexSize =
-                    this.startingNumber(key.substring(encodedOriginalIndexStartX));
+                    this.#startingNumber(key.substring(encodedOriginalIndexStartX));
                 encodedOriginalIndexStartX =
                     encodedOriginalIndexStartX + encodedOriginalIndexSize.toString().length;
                 const encodedOriginalIndexEndX =
@@ -199,24 +199,24 @@ export default class ReqSeal {
                     + encodedOriginalIndexSize;
 
                 const encodingIndex =
-                    this.decodeDigit(encodedEncodingIndex, baseSize, colForEncodingIdx);
+                    this.#decodeDigit(encodedEncodingIndex, baseSize, colForEncodingIdx);
                 const digit =
-                    this.decodeDigit(encodedDigit, baseSize, encodingIndex);
+                    this.#decodeDigit(encodedDigit, baseSize, encodingIndex);
                 const originalIndex =
-                    this.decodeDigit(encodedOriginalIndex, baseSize, colForEncodingIdx);
+                    this.#decodeDigit(encodedOriginalIndex, baseSize, colForEncodingIdx);
                 originalTime[originalIndex] = digit;
             }
             const decodedKey = Object.values(originalTime).join('');
             return parseInt(decodedKey);
         } catch (e) {
-            this.log(() => `Exception: ${e.toString()}`);
+            this.#log(() => `Exception: ${e.toString()}`);
             throw Error("Invalid key");
         }
     }
 
-    encodeDigit(digit, index) {
+    #encodeDigit(digit, index) {
         if (digit < 9) {
-            const encodedDigit = this.encode(digit, index);
+            const encodedDigit = this.#encode(digit, index);
             return encodedDigit;
         } else {
             // run a loop over each digit
@@ -228,25 +228,25 @@ export default class ReqSeal {
         }
     }
 
-    decodeDigit(encodedDigit, baseSize, index) {
+    #decodeDigit(encodedDigit, baseSize, index) {
         if (encodedDigit.length < 2) {
-            const decodedDigit = this.decode(encodedDigit, index);
+            const decodedDigit = this.#decode(encodedDigit, index);
             return decodedDigit;
         } else {
             let decodedDigit = "";
-            const parts = this.parts(encodedDigit, baseSize);
+            const parts = this.#parts(encodedDigit, baseSize);
             for (const part of parts) {
-                decodedDigit += this.decode(part, index);
+                decodedDigit += this.#decode(part, index);
             }
             return decodedDigit;
         }
     }
 
-    startingNumber(text) {
+    #startingNumber(text) {
         let value = "";
         for (let i = 0; i < text.length; i++) {
             const char = text[i];
-            if (this.isDigit(char)) {
+            if (this.#isDigit(char)) {
                 value += char;
             } else {
                 break;
@@ -255,16 +255,16 @@ export default class ReqSeal {
         return parseInt(value);
     }
 
-    isDigit(digit) {
+    #isDigit(digit) {
         return ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].includes(digit);
     }
 
-    encode(value, index) {
+    #encode(value, index) {
         const encodedValue = this.matrix[value][index];
         return encodedValue;
     }
 
-    decode(encodedValue, col) {
+    #decode(encodedValue, col) {
         // ✅ Use precomputed maps instead of scanning the matrix
         if (col !== undefined && col !== null) {
             const map = this.colDecodeMaps[col];
@@ -283,7 +283,7 @@ export default class ReqSeal {
         throw Error(`Invalid encoded value: ${encodedValue} for column: ${col}`);
     }
 
-    parts(text, chunkSize) {
+    #parts(text, chunkSize) {
         const parts = [];
         for (let i = 0; i < text.length; i += chunkSize) {
             parts.push(text.substring(i, i + chunkSize));
