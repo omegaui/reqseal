@@ -1,4 +1,4 @@
-import ReqSeal from "../lib/reqseal.js";
+import ReqSeal from "../src/reqseal.js";
 
 export const reqSeal = new ReqSeal({
     "1": ["A", "a", "B", "b", 'C', 'c'],

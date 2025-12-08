@@ -1,0 +1,10 @@
+{
+  "name": "example",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
