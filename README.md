@@ -13,7 +13,7 @@ Take a look at the [Quick example server](example/server.js) for a simple usage 
 
 ---
 
-## High-Level Idea
+# High-Level Idea
 
 At a high level, ReqSeal does this:
 
@@ -40,6 +40,261 @@ On the server, given the same matrix, you just **reverse the process**:
 * Reassemble the timestamp and compare it against `Date.now()`
 
 If the timestamp is **within a configured skew window** and has not been seen before (optional replay cache), the request is accepted. Otherwise, it’s rejected.
+
+Here’s a diagram-style walkthrough you can turn straight into a sequence diagram / architecture graphic later, plus a clear time-complexity note at the end.
+
+---
+
+## 1. High-level Architecture
+
+```text
++------------------+        +----------------------+        +------------------------+
+|      Client      |  HTTPS |    API Gateway /     |  HTTP  |   App Server with      |
+|  (mobile/web)    +-------->   Load Balancer      +--------> ReqSeal Middleware +   |
+|                  |        |  (optional layer)    |        |   Replay Cache & App   |
++------------------+        +----------------------+        +------------------------+
+                                                                       |
+                                                                       v
+                                                              +------------------+
+                                                              |  Business Logic  |
+                                                              |  (your API code) |
+                                                              +------------------+
+```
+
+---
+
+## 2. Request Flow – Step-by-Step
+
+### 2.1 Client side (before sending request)
+
+```text
++------------------+
+|      Client      |
++------------------+
+        |
+        | 1. Get current time (ms)
+        |    t = Date.now()
+        |
+        | 2. Generate dynamic key using ReqSeal
+        |    key = reqSeal.generateKey()
+        |    // internally uses t and shared matrix
+        |
+        | 3. Prepare request
+        |    - HTTP headers:
+        |        x-reqseal-key: key
+        |    - HTTP body:
+        |        JSON / payload
+        v
++------------------------+
+|   Outgoing HTTP Req    |
+|  Headers:              |
+|    x-reqseal-key = ... |
+|  Body: { ... }         |
++------------------------+
+```
+
+> At this point, the client has produced a **one-shot, time-bound API key** tied to the current timestamp and the shared encoding matrix. 
+
+---
+
+### 2.2 Gateway / Load Balancer
+
+```text
++----------------------+         +------------------------+
+| API Gateway / Proxy  |  --->   |     App Server        |
++----------------------+         +------------------------+
+        |
+        | 4. Gateway receives request
+        |    - Typically does NOT need to understand ReqSeal
+        |    - It can do rate limiting / routing / TLS termination
+        |
+        | 5. Forwards headers & body unchanged to app server
+        v
+```
+
+The ReqSeal key is just another opaque header as far as the gateway is concerned.
+
+---
+
+### 2.3 App Server – ReqSeal Middleware
+
+```text
++--------------------------------------------------------------+
+|             App Server (Express / Bun / etc.)                |
+|                                                              |
+|   Incoming Request                                            |
+|   - Headers: x-reqseal-key                                   |
+|   - Body:   JSON / payload                                   |
++--------------------------------------------------------------+
+        |
+        v
++---------------------------+
+|   ReqSeal Middleware      |
++---------------------------+
+```
+
+Inside the middleware, for each request:
+
+1. **Extract the key**
+
+   ```text
+   key = req.headers["x-reqseal-key"]
+   ```
+
+2. **Decode key → timestamp**
+
+   ```text
+   timestamp = reqSeal.decodeKey(key)
+   ```
+
+   Under the hood:
+
+   * Split into `sauce` and `body` using the separator. 
+   * Decode **sauce** to recover which column was used to encode metadata.
+   * Walk through the **body** chunks, decoding for each digit:
+
+     * encoded digit
+     * encoding index
+     * original index in the timestamp
+   * Reconstruct the original timestamp digits into `timestamp`.
+
+3. **Validate freshness (anti-stale)**
+
+   ```text
+   now = Date.now()
+   if |now - timestamp| > allowedSkewMs:
+       -> reject with 401 (expired / invalid)
+   ```
+
+4. **Replay cache check (anti-replay)** 
+
+   Conceptually:
+
+   ```text
+   cacheKey = `${timestamp}:${key}`
+   if replayCache.has(cacheKey):
+       -> reject with 401 (replay)
+   else:
+       replayCache.set(cacheKey, true, ttl = allowedSkewMs)
+   ```
+
+   * First time a key is seen: it’s stored for a short TTL.
+   * Any subsequent request with the same key within that window: rejected.
+
+5. **Attach ReqSeal info to the request & pass control**
+
+   ```text
+   req.reqSeal = { key, timestamp }
+   next()  // move to your route handlers / controllers
+   ```
+
+If any step fails (missing header, decode error, expired, replayed), the middleware short-circuits the pipeline with a `401 Unauthorized`.
+
+---
+
+### 2.4 Business Logic
+
+```text
++------------------------+
+|    Route Handler       |
++------------------------+
+        |
+        | 6. Your API handler runs only after:
+        |    - Key is syntactically valid
+        |    - Timestamp is fresh
+        |    - Not replayed (first use only)
+        |
+        | 7. Use req.reqSeal if needed:
+        |    - req.reqSeal.timestamp
+        |    - req.reqSeal.key
+        |
+        v
++------------------------+
+|   Normal API Behavior  |
+|   - DB reads/writes    |
+|   - Domain logic       |
+|   - JSON responses     |
++------------------------+
+```
+
+Result: each request that reaches your actual business logic has passed through a **dynamic, time-bound, and anti-replay gate**.
+
+---
+
+## 3. Failure Scenarios (at a glance)
+
+```text
+Client             Middleware                     Outcome
+------             ----------                     -------
+No header   ->     x-reqseal-key missing   ->    401 (missing key)
+
+Random key  ->     decodeKey throws        ->    401 (invalid key)
+
+Old key     ->     |now - ts| > skew       ->    401 (expired)
+
+Reused key  ->     replayCache hit         ->    401 (replay)
+```
+
+---
+
+## 4. Time Complexity (and why it’s effectively O(1))
+
+Let:
+
+* `n` = number of digits in the timestamp (for `Date.now()` this is always **13**)
+* Matrix size = fixed (10 rows, `N` columns)
+
+From the actual implementation:
+
+### `generateKey` (on the client)
+
+* Fisher–Yates shuffle over `n` digits → **O(n)**
+* Single pass to build encoded body → **O(n)**
+* Constant-time matrix lookups & small string operations → **O(n)** total
+
+**Theoretical complexity:**
+
+> `generateKey` runs in **Θ(n)** time.
+
+### `decodeKey` (on the server)
+
+* Split sauce/body, parse sauce → **O(n)**
+* Single linear scan over the encoded body, decoding each chunk → **O(n)**
+* Rebuild timestamp string → **O(n)**
+
+**Theoretical complexity:**
+
+> `decodeKey` runs in **Θ(n)** time.
+
+### Why that is *effectively* O(1)
+
+Practically:
+
+* `n` is **fixed** (13 digits of `Date.now()`).
+* Matrix dimensions are **fixed**.
+* So there exists a constant `C` such that:
+
+  * `time(generateKey) ≤ C` for all inputs.
+  * `time(decodeKey) ≤ C` for all inputs.
+
+From a system / scaling perspective:
+
+* Each request pays a **fixed, small cost** to:
+
+  * Generate a dynamic key on the client.
+  * Decode and validate it on the server.
+* This cost doesn’t grow with:
+
+  * Size of the body,
+  * Number of users,
+  * Total number of requests (beyond linear in count of requests themselves).
+
+So for practical purposes:
+
+> **ReqSeal generation + validation is effectively O(1) per request**
+> (constant time, with a very small constant),
+> while providing **dynamic API keys + replay protection**.
+
 
 ---
 
