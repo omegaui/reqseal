@@ -40,20 +40,6 @@
 // Step 8: When request reaches the server, validating the key is simple as the server has the same matrix.
 //         The server will just reverse the process and check if the key is valid.
 
-// Note: The above is just a basic overview of how reqseal generates a key, the actual implementation is super random, customizable and a true nightmare for attackers.
-
-// Advantages of using [reqseal] keys as API keys:
-// 1. A request can never be replayed as the key is generated based on the current time, 
-//    moreover the server can keep a temporary cache of the keys for a certain duration.
-// 2. The key is generated based on the current time, so it is always unique.
-//    the greater the value of N, the more secure the key, for example in a split millisecond
-//    there can exist more than a trillion keys, out of which only one is valid.
-// 3. The server, when reversing the process, can validate when request was sent from client
-//    say a trusted client sends a request at time t, but an interceptor obtained the request and tried to replay it after 1 minute
-//    then, the server can be sure that the request is not valid as the key is 1 minute old (say in a 30 sec threshold).
-// 4. One can safeguard there OTP endpoints to prevent abuse from replaying requests.
-// 5. There can be more usecases like safeguarding payment endpoints from replay attacks.
-
 export default class ReqSeal {
     constructor(matrix, options) {
         this.matrix = matrix;
