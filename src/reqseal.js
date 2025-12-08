@@ -59,10 +59,41 @@ export default class ReqSeal {
         this.matrix = matrix;
         this.options = {
             sauceSeparator: ":",
-            shuffleBias: 0.5,
             debug: false,
             ...options,
         };
+
+        // ✅ Precompute decode maps (for O(1) decode)
+        this.buildDecodeMaps();
+    }
+
+    buildDecodeMaps() {
+        const entries = Object.entries(this.matrix);
+        if (entries.length === 0) {
+            this.colDecodeMaps = [];
+            this.anyDecodeMap = {};
+            return;
+        }
+
+        const noOfOptions = entries[0][1].length;
+
+        // colDecodeMaps[col][encodedValue] = digitChar
+        this.colDecodeMaps = Array.from({ length: noOfOptions }, () => ({}));
+
+        // anyDecodeMap[encodedValue] = digitChar (for sauce decoding)
+        this.anyDecodeMap = {};
+
+        for (const [digit, arr] of entries) {
+            for (let col = 0; col < noOfOptions; col++) {
+                const value = arr[col];
+                this.colDecodeMaps[col][value] = digit;
+
+                // Sauce decode scans "any column", but values are globally unique by design
+                if (!(value in this.anyDecodeMap)) {
+                    this.anyDecodeMap[value] = digit;
+                }
+            }
+        }
     }
 
     log(msgFn) {
@@ -72,28 +103,60 @@ export default class ReqSeal {
     generateKey() {
         const time = Date.now().toString().split('');
         this.log(() => `Using time: ${time.join('')} as rice`);
-        const shuffled = [...time].sort(() => Math.random() - (this.options.shuffleBias));
+
+        // ✅ Fisher–Yates shuffle (O(n))
+        const shuffled = [...time];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+
         const noOfOptions = this.matrix[0].length;
         const colIdxForEncoding = Math.floor(Math.random() * noOfOptions);
-        let key = "";
+
+        // ✅ Precompute original indices for each digit (handles duplicates)
+        const indexMap = new Map();
+        for (let i = 0; i < time.length; i++) {
+            const digit = time[i];
+            if (!indexMap.has(digit)) indexMap.set(digit, []);
+            indexMap.get(digit).push(i);
+        }
+
+        // ✅ Build key with an array, then join at the end
+        const keyParts = [];
+
         for (const digit of shuffled) {
-            const originalIndex = time.indexOf(digit);
-            time[originalIndex] = ''; // clear the index to go to the next same digit on next iteration
+            const indicesQueue = indexMap.get(digit);
+            const originalIndex = indicesQueue.shift(); // O(1) per use
+
             const encodingIndex = Math.floor(Math.random() * noOfOptions);
+
             // a subset of key will contain three parts
             // [encodedDigit][encodingIndexEncoded][originalIndexEncoded]
             const encodedDigit = this.encodeDigit(digit, encodingIndex);
             const encodedEncodingIndex = this.encodeDigit(encodingIndex, colIdxForEncoding);
             const encodedOriginalIndex = this.encodeDigit(originalIndex, colIdxForEncoding);
-            key += `${encodedDigit}${encodedEncodingIndex.length}${encodedEncodingIndex}${encodedOriginalIndex.length}${encodedOriginalIndex}`;
+
+            keyParts.push(
+                encodedDigit,
+                String(encodedEncodingIndex.length),
+                encodedEncodingIndex,
+                String(encodedOriginalIndex.length),
+                encodedOriginalIndex
+            );
         }
+
         // now we also encode our [selectedColumnForUnlockingEncodedIndex]
-        const sauceParts = colIdxForEncoding.toString().split('');
-        let sauce = "";
-        for (const part of sauceParts) {
+        const sauceDigitParts = colIdxForEncoding.toString().split('');
+        const sauceChunks = [];
+        for (const part of sauceDigitParts) {
             const encodedPart = this.matrix[part][colIdxForEncoding];
-            sauce += encodedPart;
+            sauceChunks.push(encodedPart);
         }
+
+        const sauce = sauceChunks.join('');
+        const key = keyParts.join('');
+
         // add sauce to key, in a binary style
         return `${sauce}${this.options.sauceSeparator}${key}`;
     }
@@ -103,10 +166,9 @@ export default class ReqSeal {
             const sepIdx = encoded.indexOf(this.options.sauceSeparator);
             const sauce = encoded.substring(0, sepIdx);
             const key = encoded.substring(sepIdx + 1);
-            // reading the key is a tricky part
-            // which is only possible if you have the exact same matrix
-            // and the same [options] used to make the key
+
             const baseSize = this.matrix[0][0].length;
+
             // let's first find the sauce
             const sauceParts = this.parts(sauce, baseSize);
             let colForEncodingIdx = "";
@@ -115,6 +177,7 @@ export default class ReqSeal {
                 colForEncodingIdx += decoded;
             }
             colForEncodingIdx = parseInt(colForEncodingIdx);
+
             // let's now decode the key
             let originalTime = {};
             for (let i = 0; i < key.length;) {
@@ -124,22 +187,37 @@ export default class ReqSeal {
                 const encodedDigit = key.substring(encodedDigitStartX, encodedDigitEndX);
 
                 let encodedEncodingIndexSizeStartX = encodedDigitEndX;
-                const encodedEncodingIndexSize = this.startingNumber(key.substring(encodedEncodingIndexSizeStartX));
-                encodedEncodingIndexSizeStartX = encodedEncodingIndexSizeStartX + encodedEncodingIndexSize.toString().length;
-                const encodedEncodingIndexSizeEndX = encodedEncodingIndexSizeStartX + encodedEncodingIndexSize;
-                const encodedEncodingIndex = key.substring(encodedEncodingIndexSizeStartX, encodedEncodingIndexSizeEndX);
+                const encodedEncodingIndexSize =
+                    this.startingNumber(key.substring(encodedEncodingIndexSizeStartX));
+                encodedEncodingIndexSizeStartX =
+                    encodedEncodingIndexSizeStartX + encodedEncodingIndexSize.toString().length;
+                const encodedEncodingIndexSizeEndX =
+                    encodedEncodingIndexSizeStartX + encodedEncodingIndexSize;
+                const encodedEncodingIndex =
+                    key.substring(encodedEncodingIndexSizeStartX, encodedEncodingIndexSizeEndX);
 
                 let encodedOriginalIndexStartX = encodedEncodingIndexSizeEndX;
-                const encodedOriginalIndexSize = this.startingNumber(key.substring(encodedOriginalIndexStartX));
-                encodedOriginalIndexStartX = encodedOriginalIndexStartX + encodedOriginalIndexSize.toString().length;
-                const encodedOriginalIndexEndX = encodedOriginalIndexStartX + encodedOriginalIndexSize;
-                const encodedOriginalIndex = key.substring(encodedOriginalIndexStartX, encodedOriginalIndexEndX);
+                const encodedOriginalIndexSize =
+                    this.startingNumber(key.substring(encodedOriginalIndexStartX));
+                encodedOriginalIndexStartX =
+                    encodedOriginalIndexStartX + encodedOriginalIndexSize.toString().length;
+                const encodedOriginalIndexEndX =
+                    encodedOriginalIndexStartX + encodedOriginalIndexSize;
+                const encodedOriginalIndex =
+                    key.substring(encodedOriginalIndexStartX, encodedOriginalIndexEndX);
 
-                i += encodedDigitSize + encodedEncodingIndexSize.toString().length + encodedEncodingIndexSize + encodedOriginalIndexSize.toString().length + encodedOriginalIndexSize;
+                i += encodedDigitSize
+                    + encodedEncodingIndexSize.toString().length
+                    + encodedEncodingIndexSize
+                    + encodedOriginalIndexSize.toString().length
+                    + encodedOriginalIndexSize;
 
-                const encodingIndex = this.decodeDigit(encodedEncodingIndex, baseSize, colForEncodingIdx);
-                const digit = this.decodeDigit(encodedDigit, baseSize, encodingIndex);
-                const originalIndex = this.decodeDigit(encodedOriginalIndex, baseSize, colForEncodingIdx);
+                const encodingIndex =
+                    this.decodeDigit(encodedEncodingIndex, baseSize, colForEncodingIdx);
+                const digit =
+                    this.decodeDigit(encodedDigit, baseSize, encodingIndex);
+                const originalIndex =
+                    this.decodeDigit(encodedOriginalIndex, baseSize, colForEncodingIdx);
                 originalTime[originalIndex] = digit;
             }
             const decodedKey = Object.values(originalTime).join('');
@@ -201,22 +279,19 @@ export default class ReqSeal {
     }
 
     decode(encodedValue, col) {
-        // map entries
-        const entries = Object.entries(this.matrix);
-        if (col) {
-            for (const entry of entries) {
-                if (entry[1][col] === encodedValue) {
-                    return entry[0];
+        // ✅ Use precomputed maps instead of scanning the matrix
+        if (col !== undefined && col !== null) {
+            const map = this.colDecodeMaps[col];
+            if (map) {
+                const decoded = map[encodedValue];
+                if (decoded !== undefined) {
+                    return decoded;
                 }
             }
         } else {
-            // below loop is only used for decoding sauce
-            for (const entry of entries) {
-                for (const value of entry[1]) {
-                    if (value === encodedValue) {
-                        return entry[0];
-                    }
-                }
+            const decoded = this.anyDecodeMap[encodedValue];
+            if (decoded !== undefined) {
+                return decoded;
             }
         }
         throw Error(`Invalid encoded value: ${encodedValue} for column: ${col}`);
@@ -230,4 +305,3 @@ export default class ReqSeal {
         return parts;
     }
 }
-

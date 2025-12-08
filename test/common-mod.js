@@ -12,6 +12,6 @@ export const reqSeal = new ReqSeal({
     "9": ["Y", "y", "Z", "z", "+", "-"],
     "0": ["/", "*", "=", "?", "!", "@"],
 }, {
-    debug: true, // take [false] for true testing test-4
+    debug: false, // take [false] for true testing test-4
     sauceSeparator: 'Z',
 });

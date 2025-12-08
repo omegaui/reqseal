@@ -1,7 +1,6 @@
 {
   "name": "reqseal",
   "version": "1.0.0",
-  "module": "lib/reqseal.js",
   "type": "module",
   "private": true,
   "devDependencies": {
