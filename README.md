@@ -3,6 +3,9 @@
 **ReqSeal is a lightweight request freshness and replay-protection layer for HTTP APIs.**
 It ensures that every incoming request carries a short-lived, one-time key derived from the current timestamp.
 
+In short
+> ReqSeal makes sure that all requests have a unique one-time-use API key, preventing replay DDOS attacks with an optional request lifetime check.
+
 > ⚠️ **Important:** ReqSeal is **not a cryptographic authentication system**, does **not sign request payloads**, and should be treated as **defense-in-depth**, not as your primary security mechanism.
 
 ---
